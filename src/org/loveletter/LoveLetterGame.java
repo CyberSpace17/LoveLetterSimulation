@@ -10,6 +10,7 @@ import org.loveletter.Players.Best;
 import org.loveletter.Players.High_Random;
 import org.loveletter.Players.KillMaidLow_BrainHigh;
 import org.loveletter.Players.KillMaidPriestLow_BrainHigh;
+import org.loveletter.Players.LearnerState;
 import org.loveletter.Players.Low_BrainHigh;
 import org.loveletter.Players.Low_High;
 import org.loveletter.Players.Low_HighProbability;
@@ -23,6 +24,8 @@ import org.loveletter.Players.Random_HighProbability;
 import org.loveletter.Players.Random_Princess;
 import org.loveletter.Players.Random_Random;
 import org.loveletter.Players.TestPlayer;
+import org.loveletter.Players.True_Random;
+import org.loveletter.Players.Worst;
 
 /**
  * Simulate Love Letter card game
@@ -30,7 +33,8 @@ import org.loveletter.Players.TestPlayer;
  */
 public class LoveLetterGame {
     public static final int NUM_GAMES = 1000000;
-            
+	public static ArrayList<Long> timeList = new ArrayList<Long>();
+    
     public static void main(String[] args) {
         Log.logTRACE = false;
         Log.info("running ...");
@@ -56,7 +60,11 @@ public class LoveLetterGame {
         playerPool.add(new KillMaidLow_BrainHigh());
         playerPool.add(new KillMaidPriestLow_BrainHigh());
         playerPool.add(new TestPlayer());
-        
+		LearnerState learner = new LearnerState(LearnerState.Mode.Testing);
+		playerPool.add(learner);
+		playerPool.add(new True_Random());
+		playerPool.add(new Worst());
+		
         // Cheaters -- Do not include in fair comparison
         //playerPool.add(new CheatingLooker());
         
@@ -69,8 +77,10 @@ public class LoveLetterGame {
         }
         
         List<Player> players = new ArrayList<Player>();
+		long start = System.currentTimeMillis();
+		long globalStart = System.currentTimeMillis();
         for (int i = 0; i < NUM_GAMES; i++) {
-        	
+			start = System.currentTimeMillis();
         	// Pick four random players from the pool for a game
         	players.clear();
         	Collections.shuffle(playerPool);
@@ -89,8 +99,20 @@ public class LoveLetterGame {
             for (Player player : board.gameStats.winners) {
                 wins.put(player, wins.get(player)+1);
             }
-        }
-        
+
+			// update learner if in player pool
+			for (Player p : players) {
+				if (p.getClass().equals(LearnerState.class)) {
+					handleLearners(players, board);
+					break;
+				}
+			}
+			printGameTimeStats(NUM_GAMES, i, start, 100);
+		}
+		// end of batch stats
+		long totalDuration = System.currentTimeMillis() - globalStart;
+		System.out.println(NUM_GAMES + " games played in " + totalDuration / 1000.0 + " seconds");
+		
         // Sort playerPool by winratio
         Collections.sort(playerPool, new Comparator<Player>() {
 			@Override
@@ -116,6 +138,60 @@ public class LoveLetterGame {
 		while (s.length() <= i)
 			s+= ' ';
 		return s;
+	}
+
+	static void handleLearners(List<Player> players, Board board) {
+		LearnerState learner = null;
+		for (Player p : players) {
+			if (p.getClass().equals(LearnerState.class)) {
+				learner = (LearnerState) p;
+				learner.updateAtEnd(board.currentPlayerId == learner.id);
+			}
+		}
+		for (Player p : players) {
+			if (p.getClass().equals(LearnerState.class)) {
+				learner = (LearnerState) p;
+				learner.collectExperience(players);
+			}
+		}
+		if (learner.isTimeToSave())
+			learner.saveExperience();
+	}
+
+	/**
+	 * Prints an estimate of the remaining time to play the current batch of games.
+	 * Calculates an average game duration for the last "size" number of games
+	 * played and prints the product of the average and the remaining games broken
+	 * down by hour, minute, and second
+	 * 
+	 * @param numGames - total games to be played
+	 * @param gameNum  - count of games played
+	 * @param start    - start time in milliseconds of the start of the most recent
+	 *                 game
+	 * @param size     - size of the list of durations to be maintained.
+	 */
+	static void printGameTimeStats(int numGames, int gameNum, long start, int size) {
+		int index = gameNum % size;
+		long gameDuration = System.currentTimeMillis() - start;
+		if (timeList.size() <= index) {
+			timeList.add(index, gameDuration);
+		} else {
+			timeList.set(index, gameDuration);
+		}
+		long sum = 0;
+		for (Long time : timeList) {
+			sum += time;
+		}
+		double average = sum / timeList.size();
+		double averageSeconds = average / 1000.0;
+		double averageTimeLeft = (NUM_GAMES - (gameNum + 1)) * averageSeconds;
+		int hoursLeft = (int) (averageTimeLeft / 3600);
+		int minLeft = (int) ((averageTimeLeft % 3600) / 60);
+		int secLeft = (int) (averageTimeLeft % 60);
+		System.out.println("Length of game " + (gameNum + 1) + " was " + gameDuration / 1000.0 + " seconds");
+		System.out.println("WRA seconds per game: " + averageSeconds);
+		System.out.println(
+				"WRA Estimate time left: " + hoursLeft + " hours " + minLeft + " minutes " + secLeft + " seconds\n");
 	}
 
 }
